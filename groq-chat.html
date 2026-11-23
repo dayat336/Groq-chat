@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Groq Chat</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --line: #262d38;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #f55036;
+    --accent2: #ff8a5c;
+    --user: #1f2a3a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+  }
+  header {
+    padding: 12px 14px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .top { display: flex; align-items: center; justify-content: space-between; }
+  .brand {
+    font-weight: 700;
+    font-size: 18px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .status { font-size: 12px; color: var(--muted); }
+  .status.ok { color: #3fb950; }
+  .row { display: flex; gap: 8px; }
+  input, select, textarea, button {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    outline: none;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+  #apiKey { flex: 1; min-width: 0; }
+  select { flex: 1; min-width: 0; }
+  button {
+    cursor: pointer;
+    background: var(--line);
+    white-space: nowrap;
+  }
+  button.primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none;
+    color: #fff;
+    font-weight: 600;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  #chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .empty {
+    margin: auto;
+    text-align: center;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .msg {
+    max-width: 88%;
+    padding: 10px 14px;
+    border-radius: 16px;
+    line-height: 1.55;
+    font-size: 15px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+  }
+  .msg.user {
+    align-self: flex-end;
+    background: var(--user);
+    border-bottom-right-radius: 4px;
+  }
+  .msg.ai {
+    align-self: flex-start;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-bottom-left-radius: 4px;
+  }
+  .msg.err { border-color: #f85149; color: #ff938c; }
+  .msg code, .msg pre {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 13px;
+  }
+  .msg pre {
+    background: #0a0d12;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px;
+    margin: 8px 0;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .msg :not(pre) > code {
+    background: #0a0d12;
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  footer {
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+  }
+  #prompt {
+    flex: 1;
+    min-width: 0;
+    resize: none;
+    max-height: 120px;
+  }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="top">
+    <span class="brand">⚡ Groq Chat</span>
+    <span class="status" id="status">API key belum diisi</span>
+  </div>
+  <div class="row">
+    <select id="model">
+      <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile</option>
+      <option value="llama-3.1-8b-instant">llama-3.1-8b-instant</option>
+    </select>
+    <button id="loadModels">Muat model</button>
+    <button id="clear">Hapus chat</button>
+  </div>
+</header>
+
+<main id="chat">
+  <div class="empty" id="empty">
+    Mulai ngobrol dengan model Groq. 🚀
+  </div>
+</main>
+
+<footer>
+  <div class="row">
+    <textarea id="prompt" rows="1" placeholder="Tulis pesan..."></textarea>
+    <button class="primary" id="send">Kirim</button>
+  </div>
+</footer>
+
+<script>
+  const ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
+  const MODELS_ENDPOINT = "https://api.groq.com/openai/v1/models";
+
+  // ====== ISI API KEY GROQ KAMU DI SINI ======
+  const API_KEY = "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";
+  // ============================================
+
+  const $ = (id) => document.getElementById(id);
+  const chat = $("chat"), model = $("model");
+  const promptEl = $("prompt"), sendBtn = $("send"), statusEl = $("status");
+
+  let history = [];
+  let busy = false;
+
+  // --- penyimpanan lokal (aman dari error) ---
+  function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function save(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+  const savedModel = load("groq_model");
+  if (savedModel) {
+    if (![...model.options].some(o => o.value === savedModel)) {
+      model.add(new Option(savedModel, savedModel));
+    }
+    model.value = savedModel;
+  }
+  updateStatus();
+
+  function updateStatus() {
+    const ok = API_KEY.startsWith("gsk_") && !API_KEY.includes("ISI_API_KEY");
+    statusEl.textContent = ok ? "API key siap" : "API key belum diisi di kode";
+    statusEl.className = "status" + (ok ? " ok" : "");
+  }
+
+  model.addEventListener("change", () => save("groq_model", model.value));
+
+  // --- muat daftar model dari Groq ---
+  $("loadModels").onclick = async () => {
+    const key = API_KEY;
+    if (!key || key.includes("ISI_API_KEY")) return addMsg("Isi API_KEY di dalam kode dulu.", "ai err");
+    try {
+      const r = await fetch(MODELS_ENDPOINT, { headers: { Authorization: "Bearer " + key } });
+      if (!r.ok) throw new Error((await r.json()).error?.message || r.status);
+      const data = await r.json();
+      const ids = data.data.map(m => m.id).filter(id => !/whisper|guard|tts|playai/i.test(id)).sort();
+      const current = model.value;
+      model.innerHTML = "";
+      ids.forEach(id => model.add(new Option(id, id)));
+      if (ids.includes(current)) model.value = current;
+      save("groq_model", model.value);
+    } catch (e) {
+      addMsg("Gagal memuat model: " + e.message, "ai err");
+    }
+  };
+
+  $("clear").onclick = () => {
+    history = [];
+    chat.innerHTML = '<div class="empty" id="empty">Chat dihapus. Mulai lagi! ✨</div>';
+  };
+
+  // --- tampilan pesan ---
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function render(text) {
+    // blok kode ``` dan kode inline `
+    let html = escapeHtml(text);
+    html = html.replace(/```(?:\w+)?\n?([\s\S]*?)```/g, (_, c) => "<pre><code>" + c + "</code></pre>");
+    html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+    html = html.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+    return html;
+  }
+  function addMsg(text, cls) {
+    const e = $("empty"); if (e) e.remove();
+    const div = document.createElement("div");
+    div.className = "msg " + cls;
+    div.innerHTML = cls.includes("user") ? escapeHtml(text) : render(text);
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+    return div;
+  }
+
+  // --- kirim pesan (streaming) ---
+  async function send() {
+    const text = promptEl.value.trim();
+    const key = API_KEY;
+    if (!text || busy) return;
+    if (!key || key.includes("ISI_API_KEY")) return addMsg("Isi API_KEY di dalam kode dulu.", "ai err");
+
+    busy = true; sendBtn.disabled = true;
+    promptEl.value = ""; promptEl.style.height = "auto";
+    addMsg(text, "user");
+    history.push({ role: "user", content: text });
+
+    const bubble = addMsg("…", "ai");
+    let full = "";
+
+    try {
+      const res = await fetch(ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer " + key
+        },
+        body: JSON.stringify({
+          model: model.value,
+          messages: history,
+          stream: true
+        })
+      });
+
+      if (!res.ok) {
+        let msg = res.status + " " + res.statusText;
+        try { msg = (await res.json()).error?.message || msg; } catch (e) {}
+        throw new Error(msg);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+        for (const line of lines) {
+          const l = line.trim();
+          if (!l.startsWith("data:")) continue;
+          const payload = l.slice(5).trim();
+          if (payload === "[DONE]") continue;
+          try {
+            const delta = JSON.parse(payload).choices?.[0]?.delta?.content;
+            if (delta) {
+              full += delta;
+              bubble.innerHTML = render(full);
+              chat.scrollTop = chat.scrollHeight;
+            }
+          } catch (e) {}
+        }
+      }
+      history.push({ role: "assistant", content: full });
+    } catch (e) {
+      history.pop(); // buang pesan user yang gagal
+      bubble.className = "msg ai err";
+      bubble.textContent = "Error: " + e.message;
+    } finally {
+      busy = false; sendBtn.disabled = false;
+      promptEl.focus();
+    }
+  }
+
+  sendBtn.onclick = send;
+  promptEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey && window.innerWidth > 700) {
+      e.preventDefault(); send();
+    }
+  });
+  promptEl.addEventListener("input", () => {
+    promptEl.style.height = "auto";
+    promptEl.style.height = Math.min(promptEl.scrollHeight, 120) + "px";
+  });
+</script>
+</body>
+</html>
